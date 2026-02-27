@@ -43,7 +43,7 @@ public sealed class StatusBadge : Control
 
     public StatusBadge()
     {
-        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.SupportsTransparentBackColor, true);
         Size = new Size(140, 24);
         BackColor = Color.Transparent;
     }
