@@ -13,7 +13,7 @@ public sealed class MetricCard : Control
         set { _title = value; Invalidate(); }
     }
 
-    public new string Value
+    public string Value
     {
         get => _value;
         set { _value = value; Invalidate(); }

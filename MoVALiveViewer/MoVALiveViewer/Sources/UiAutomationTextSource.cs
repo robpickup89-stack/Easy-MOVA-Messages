@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 
 namespace MoVALiveViewer.Sources;
 
-public sealed class UiAutomationTextSource : ITextSource
+public sealed partial class UiAutomationTextSource : ITextSource
 {
     private CancellationTokenSource? _cts;
     private Task? _pollTask;
@@ -87,7 +87,7 @@ public sealed class UiAutomationTextSource : ITextSource
 
     public static List<(int pid, string name, string title)> GetProcessesWithWindows()
     {
-        var result = new List<(int, string, string)>();
+        var result = new List<(int pid, string name, string title)>();
         try
         {
             foreach (var proc in Process.GetProcesses())
@@ -164,7 +164,7 @@ public sealed class UiAutomationTextSource : ITextSource
         }
     }
 
-    private string ComputeDelta(string lastText, string currentText)
+    private static string ComputeDelta(string lastText, string currentText)
     {
         if (string.IsNullOrEmpty(lastText))
             return currentText;
@@ -207,48 +207,51 @@ public sealed class UiAutomationTextSource : ITextSource
         int len = (int)SendMessage(hwnd, WM_GETTEXTLENGTH, IntPtr.Zero, IntPtr.Zero);
         if (len <= 0) return string.Empty;
 
-        var buffer = new char[len + 1];
-        unsafe
+        IntPtr buffer = Marshal.AllocHGlobal((len + 1) * sizeof(char));
+        try
         {
-            fixed (char* p = buffer)
-            {
-                SendMessage(hwnd, WM_GETTEXT, (IntPtr)(len + 1), (IntPtr)p);
-            }
+            SendMessage(hwnd, WM_GETTEXT, (IntPtr)(len + 1), buffer);
+            return Marshal.PtrToStringUni(buffer);
         }
-        return new string(buffer, 0, len);
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
     }
 
     private static string? GetClassName(IntPtr hwnd)
     {
-        var buffer = new char[256];
-        unsafe
+        IntPtr buffer = Marshal.AllocHGlobal(256 * sizeof(char));
+        try
         {
-            fixed (char* p = buffer)
-            {
-                int len = GetClassName(hwnd, (IntPtr)p, 256);
-                if (len > 0) return new string(buffer, 0, len);
-            }
+            int len = GetClassName(hwnd, buffer, 256);
+            if (len > 0) return Marshal.PtrToStringUni(buffer, len);
+            return null;
         }
-        return null;
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
     }
 
     // Win32 Interop
     private const int WM_GETTEXT = 0x000D;
     private const int WM_GETTEXTLENGTH = 0x000E;
 
-    [DllImport("user32.dll")]
-    private static extern bool IsWindow(IntPtr hwnd);
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool IsWindow(IntPtr hwnd);
 
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam);
+    [LibraryImport("user32.dll", SetLastError = true)]
+    private static partial IntPtr SendMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam);
 
     private delegate bool EnumChildProc(IntPtr hwnd, IntPtr lParam);
 
     [DllImport("user32.dll")]
     private static extern bool EnumChildWindows(IntPtr parentHwnd, EnumChildProc callback, IntPtr lParam);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int GetClassName(IntPtr hwnd, IntPtr lpClassName, int nMaxCount);
+    [LibraryImport("user32.dll")]
+    private static partial int GetClassName(IntPtr hwnd, IntPtr lpClassName, int nMaxCount);
 
     public void Dispose()
     {
