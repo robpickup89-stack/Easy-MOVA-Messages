@@ -20,7 +20,7 @@ public sealed class LedIndicator : Control
 
     public LedIndicator()
     {
-        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.SupportsTransparentBackColor, true);
         Size = new Size(36, 52);
         BackColor = Color.Transparent;
     }
