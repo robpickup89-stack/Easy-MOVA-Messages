@@ -19,7 +19,6 @@ public sealed class AppState
     public int TotalLinesProcessed { get; private set; }
     public int TotalSnapshots { get; private set; }
 
-    public event Action? SnapshotChanged;
     public event Action<Snapshot>? SnapshotFinalized;
 
     public AppState(int ringBufferSize = 1000)
