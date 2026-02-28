@@ -72,6 +72,7 @@ public sealed class MovaViewerForm : Form
 
     // Process list cache for textbox selector
     private List<(int pid, string name, string title)> _processList = new();
+    private bool _isRefreshing;
 
     public MovaViewerForm()
     {
@@ -142,6 +143,7 @@ public sealed class MovaViewerForm : Form
         _processSelector.Visible = _sourceMode.SelectedIndex == 1;
         _processSelector.DropDownStyle = ComboBoxStyle.DropDownList;
         _processSelector.SelectedIndexChanged += ProcessSelector_Changed;
+        _processSelector.DropDown += (_, _) => RefreshProcessList();
 
         // Textbox selector
         _textboxSelector.Size = new Size(220, 25);
@@ -149,6 +151,7 @@ public sealed class MovaViewerForm : Form
         _textboxSelector.ForeColor = Theme.TextPrimary;
         _textboxSelector.Visible = false;
         _textboxSelector.DropDownStyle = ComboBoxStyle.DropDownList;
+        _textboxSelector.DropDown += TextboxSelector_DropDown;
 
         // Refresh button
         _refreshBtn.Text = "\u21BB";
@@ -696,21 +699,66 @@ public sealed class MovaViewerForm : Form
 
     private void RefreshProcessList()
     {
-        _processSelector.Items.Clear();
-        _textboxSelector.Items.Clear();
-        _textboxSelector.Visible = false;
+        _isRefreshing = true;
+        try
+        {
+            // Remember current selection so we can restore it
+            string? prevName = null;
+            string? prevTitle = null;
+            if (_processSelector.SelectedIndex >= 0 && _processSelector.SelectedIndex < _processList.Count)
+            {
+                var prev = _processList[_processSelector.SelectedIndex];
+                prevName = prev.name;
+                prevTitle = prev.title;
+            }
 
-        _processList = UiAutomationTextSource.GetProcessesWithWindows();
-        foreach (var p in _processList)
-            _processSelector.Items.Add($"{p.name} - {p.title}");
+            _processSelector.Items.Clear();
+            _textboxSelector.Items.Clear();
+            _textboxSelector.Visible = false;
 
-        if (_processSelector.Items.Count > 0)
-            _processSelector.SelectedIndex = 0;
+            _processList = UiAutomationTextSource.GetProcessesWithWindows();
+            foreach (var p in _processList)
+                _processSelector.Items.Add($"{p.name} - {p.title}");
+
+            // Try to restore previous selection by matching name and title
+            int restoreIndex = -1;
+            if (prevName != null)
+            {
+                for (int i = 0; i < _processList.Count; i++)
+                {
+                    if (_processList[i].name == prevName && _processList[i].title == prevTitle)
+                    {
+                        restoreIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            if (_processSelector.Items.Count > 0)
+                _processSelector.SelectedIndex = restoreIndex >= 0 ? restoreIndex : 0;
+        }
+        finally
+        {
+            _isRefreshing = false;
+        }
+
+        // Populate textboxes for current selection (outside the guard so it runs normally)
+        if (_processSelector.SelectedIndex >= 0)
+            PopulateTextboxSelector();
     }
 
     private void ProcessSelector_Changed(object? sender, EventArgs e)
     {
+        if (_isRefreshing) return;
         PopulateTextboxSelector();
+    }
+
+    private void TextboxSelector_DropDown(object? sender, EventArgs e)
+    {
+        int prevIndex = _textboxSelector.SelectedIndex;
+        PopulateTextboxSelector();
+        if (prevIndex >= 0 && prevIndex < _textboxSelector.Items.Count)
+            _textboxSelector.SelectedIndex = prevIndex;
     }
 
     private void PopulateTextboxSelector()
