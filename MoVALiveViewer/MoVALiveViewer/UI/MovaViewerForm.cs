@@ -727,28 +727,47 @@ public sealed class MovaViewerForm : Form
 
         try
         {
-            var processes = Process.GetProcessesByName(selected.name);
-            foreach (var proc in processes)
+            // Use PID directly instead of fragile name+title lookup
+            using var proc = Process.GetProcessById(selected.pid);
+            if (proc.MainWindowHandle != IntPtr.Zero)
             {
-                try
-                {
-                    if (proc.MainWindowHandle != IntPtr.Zero &&
-                        (proc.MainWindowTitle?.Contains(selected.title, StringComparison.OrdinalIgnoreCase) ?? false))
-                    {
-                        var editControls = UiAutomationTextSource.GetEditControlsForWindow(proc.MainWindowHandle);
-                        foreach (var ctrl in editControls)
-                            _textboxSelector.Items.Add($"[{ctrl.index}] {ctrl.className}: {ctrl.textPreview}");
-                        break;
-                    }
-                }
-                finally { proc.Dispose(); }
+                var editControls = UiAutomationTextSource.GetEditControlsForWindow(proc.MainWindowHandle);
+                foreach (var ctrl in editControls)
+                    _textboxSelector.Items.Add($"[{ctrl.index}] {ctrl.className}: {ctrl.textPreview}");
             }
         }
-        catch { }
+        catch
+        {
+            // Process may have exited; fall back to name-based lookup
+            try
+            {
+                var processes = Process.GetProcessesByName(selected.name);
+                foreach (var proc in processes)
+                {
+                    try
+                    {
+                        if (proc.MainWindowHandle != IntPtr.Zero &&
+                            (proc.MainWindowTitle?.Contains(selected.title, StringComparison.OrdinalIgnoreCase) ?? false))
+                        {
+                            var editControls = UiAutomationTextSource.GetEditControlsForWindow(proc.MainWindowHandle);
+                            foreach (var ctrl in editControls)
+                                _textboxSelector.Items.Add($"[{ctrl.index}] {ctrl.className}: {ctrl.textPreview}");
+                            break;
+                        }
+                    }
+                    finally { proc.Dispose(); }
+                }
+            }
+            catch { }
+        }
 
-        _textboxSelector.Visible = _textboxSelector.Items.Count > 0;
-        if (_textboxSelector.Items.Count > 0)
-            _textboxSelector.SelectedIndex = 0;
+        // If process was in filtered list (has edit controls) but enumeration found nothing,
+        // add a default entry so the dropdown isn't blank
+        if (_textboxSelector.Items.Count == 0)
+            _textboxSelector.Items.Add("[0] Default (first textbox)");
+
+        _textboxSelector.Visible = true;
+        _textboxSelector.SelectedIndex = 0;
     }
 
     private void ThemeBtn_Click(object? sender, EventArgs e)
