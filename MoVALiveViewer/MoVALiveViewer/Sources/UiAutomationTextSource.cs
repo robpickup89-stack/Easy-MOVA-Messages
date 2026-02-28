@@ -119,7 +119,7 @@ public sealed partial class UiAutomationTextSource : ITextSource
     {
         var controls = new List<(int index, string className, string textPreview)>();
         int idx = 0;
-        EnumChildWindows(parentHwnd, (hwnd, _) =>
+        EnumerateDescendantWindows(parentHwnd, hwnd =>
         {
             var className = GetClassName(hwnd);
             if (className != null && IsEditClassName(className))
@@ -131,7 +131,7 @@ public sealed partial class UiAutomationTextSource : ITextSource
                 idx++;
             }
             return true;
-        }, IntPtr.Zero);
+        });
         return controls;
     }
 
@@ -221,7 +221,7 @@ public sealed partial class UiAutomationTextSource : ITextSource
     private static bool HasEditControl(IntPtr parentHwnd)
     {
         bool found = false;
-        EnumChildWindows(parentHwnd, (hwnd, _) =>
+        EnumerateDescendantWindows(parentHwnd, hwnd =>
         {
             var className = GetClassName(hwnd);
             if (className != null && IsEditClassName(className))
@@ -230,7 +230,7 @@ public sealed partial class UiAutomationTextSource : ITextSource
                 return false; // stop enumeration
             }
             return true;
-        }, IntPtr.Zero);
+        });
         return found;
     }
 
@@ -243,7 +243,7 @@ public sealed partial class UiAutomationTextSource : ITextSource
     {
         IntPtr found = IntPtr.Zero;
         int currentIndex = 0;
-        EnumChildWindows(parentHwnd, (hwnd, _) =>
+        EnumerateDescendantWindows(parentHwnd, hwnd =>
         {
             var className = GetClassName(hwnd);
             if (className != null && IsEditClassName(className))
@@ -256,8 +256,34 @@ public sealed partial class UiAutomationTextSource : ITextSource
                 currentIndex++;
             }
             return true;
-        }, IntPtr.Zero);
+        });
         return found;
+    }
+
+    private static bool EnumerateDescendantWindows(IntPtr parentHwnd, Func<IntPtr, bool> visitor)
+    {
+        bool shouldContinue = true;
+
+        void VisitChildren(IntPtr parent)
+        {
+            if (!shouldContinue) return;
+
+            EnumChildWindows(parent, (hwnd, _) =>
+            {
+                if (!shouldContinue)
+                    return false;
+
+                shouldContinue = visitor(hwnd);
+                if (!shouldContinue)
+                    return false;
+
+                VisitChildren(hwnd);
+                return shouldContinue;
+            }, IntPtr.Zero);
+        }
+
+        VisitChildren(parentHwnd);
+        return shouldContinue;
     }
 
     private static string? GetWindowText(IntPtr hwnd)

@@ -22,7 +22,9 @@ public sealed class MovaViewerForm : Form
     // Toolbar controls
     private readonly ToolStrip _toolbar = new();
     private readonly ToolStripComboBox _sourceMode = new();
+    private readonly ToolStripLabel _processLabel = new("Process:");
     private readonly ToolStripComboBox _processSelector = new();
+    private readonly ToolStripLabel _textboxLabel = new("Textbox:");
     private readonly ToolStripComboBox _textboxSelector = new();
     private readonly ToolStripButton _refreshBtn = new();
     private readonly ToolStripButton _connectBtn = new();
@@ -137,6 +139,9 @@ public sealed class MovaViewerForm : Form
         _sourceMode.SelectedIndexChanged += SourceMode_Changed;
 
         // Process selector
+        _processLabel.ForeColor = Theme.TextMuted;
+        _processLabel.Visible = _sourceMode.SelectedIndex == 1;
+
         _processSelector.Size = new Size(180, 25);
         _processSelector.BackColor = Theme.SurfaceLight;
         _processSelector.ForeColor = Theme.TextPrimary;
@@ -146,6 +151,9 @@ public sealed class MovaViewerForm : Form
         _processSelector.DropDown += (_, _) => RefreshProcessList();
 
         // Textbox selector
+        _textboxLabel.ForeColor = Theme.TextMuted;
+        _textboxLabel.Visible = false;
+
         _textboxSelector.Size = new Size(220, 25);
         _textboxSelector.BackColor = Theme.SurfaceLight;
         _textboxSelector.ForeColor = Theme.TextPrimary;
@@ -235,7 +243,9 @@ public sealed class MovaViewerForm : Form
         {
             new ToolStripLabel("Source:") { ForeColor = Theme.TextMuted },
             _sourceMode,
+            _processLabel,
             _processSelector,
+            _textboxLabel,
             _textboxSelector,
             _refreshBtn,
             _replaySpeed,
@@ -687,6 +697,8 @@ public sealed class MovaViewerForm : Form
     {
         bool isUia = _sourceMode.SelectedIndex == 1;
         _processSelector.Visible = isUia;
+        _processLabel.Visible = isUia;
+        _textboxLabel.Visible = false;
         _textboxSelector.Visible = false;
         _refreshBtn.Visible = isUia;
         _replaySpeed.Visible = !isUia;
@@ -768,6 +780,7 @@ public sealed class MovaViewerForm : Form
         if (_processSelector.SelectedIndex < 0 || _processSelector.SelectedIndex >= _processList.Count)
         {
             _textboxSelector.Visible = false;
+            _textboxLabel.Visible = false;
             return;
         }
 
@@ -815,6 +828,7 @@ public sealed class MovaViewerForm : Form
             _textboxSelector.Items.Add("[0] Default (first textbox)");
 
         _textboxSelector.Visible = true;
+        _textboxLabel.Visible = true;
         _textboxSelector.SelectedIndex = 0;
     }
 
