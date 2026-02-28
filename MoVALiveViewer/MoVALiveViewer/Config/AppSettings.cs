@@ -19,6 +19,7 @@ public sealed class AppSettings
     public bool FilterNX { get; set; }
     public int WindowWidth { get; set; } = 1400;
     public int WindowHeight { get; set; } = 900;
+    public string ThemeMode { get; set; } = "Dark";
 
     private static string SettingsPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

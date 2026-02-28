@@ -19,6 +19,7 @@ public sealed partial class UiAutomationTextSource : ITextSource
     public bool IsRunning { get; private set; }
     public string? TargetProcessName { get; set; }
     public string? TargetWindowTitle { get; set; }
+    public int TargetControlIndex { get; set; }
 
     public int PollIntervalMs
     {
@@ -85,6 +86,9 @@ public sealed partial class UiAutomationTextSource : ITextSource
         return false;
     }
 
+    /// <summary>
+    /// Returns only processes whose main window contains at least one Edit/RichEdit/TextBox child control.
+    /// </summary>
     public static List<(int pid, string name, string title)> GetProcessesWithWindows()
     {
         var result = new List<(int pid, string name, string title)>();
@@ -95,7 +99,10 @@ public sealed partial class UiAutomationTextSource : ITextSource
                 try
                 {
                     if (proc.MainWindowHandle != IntPtr.Zero && !string.IsNullOrEmpty(proc.MainWindowTitle))
-                        result.Add((proc.Id, proc.ProcessName, proc.MainWindowTitle));
+                    {
+                        if (HasEditControl(proc.MainWindowHandle))
+                            result.Add((proc.Id, proc.ProcessName, proc.MainWindowTitle));
+                    }
                 }
                 catch { }
                 finally { proc.Dispose(); }
@@ -103,6 +110,29 @@ public sealed partial class UiAutomationTextSource : ITextSource
         }
         catch { }
         return result.OrderBy(p => p.name).ToList();
+    }
+
+    /// <summary>
+    /// Enumerates all edit controls within a given window, returning their class name and text preview.
+    /// </summary>
+    public static List<(int index, string className, string textPreview)> GetEditControlsForWindow(IntPtr parentHwnd)
+    {
+        var controls = new List<(int index, string className, string textPreview)>();
+        int idx = 0;
+        EnumChildWindows(parentHwnd, (hwnd, _) =>
+        {
+            var className = GetClassName(hwnd);
+            if (className != null && IsEditClassName(className))
+            {
+                var text = GetWindowText(hwnd);
+                var preview = string.IsNullOrEmpty(text) ? "(empty)" :
+                    text.Length > 50 ? text[..50].Replace("\r", "").Replace("\n", " ") + "..." : text.Replace("\r", "").Replace("\n", " ");
+                controls.Add((idx, className, preview));
+                idx++;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return controls;
     }
 
     private async Task PollLoop(CancellationToken ct)
@@ -126,7 +156,7 @@ public sealed partial class UiAutomationTextSource : ITextSource
                     }
                 }
 
-                var editHwnd = FindEditControl(_targetHwnd);
+                var editHwnd = FindEditControlByIndex(_targetHwnd, TargetControlIndex);
                 if (editHwnd == IntPtr.Zero)
                 {
                     if (consecutiveErrors++ > 10)
@@ -182,20 +212,48 @@ public sealed partial class UiAutomationTextSource : ITextSource
         return currentText;
     }
 
-    private static IntPtr FindEditControl(IntPtr parentHwnd)
+    private static bool IsEditClassName(string className) =>
+        className.Contains("Edit", StringComparison.OrdinalIgnoreCase) ||
+        className.Contains("RichEdit", StringComparison.OrdinalIgnoreCase) ||
+        className.Contains("TextBox", StringComparison.OrdinalIgnoreCase) ||
+        className.Contains("RICHEDIT", StringComparison.OrdinalIgnoreCase);
+
+    private static bool HasEditControl(IntPtr parentHwnd)
     {
-        IntPtr found = IntPtr.Zero;
+        bool found = false;
         EnumChildWindows(parentHwnd, (hwnd, _) =>
         {
             var className = GetClassName(hwnd);
-            if (className != null &&
-                (className.Contains("Edit", StringComparison.OrdinalIgnoreCase) ||
-                 className.Contains("RichEdit", StringComparison.OrdinalIgnoreCase) ||
-                 className.Contains("TextBox", StringComparison.OrdinalIgnoreCase) ||
-                 className.Contains("RICHEDIT", StringComparison.OrdinalIgnoreCase)))
+            if (className != null && IsEditClassName(className))
             {
-                found = hwnd;
-                return false;
+                found = true;
+                return false; // stop enumeration
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    private static IntPtr FindEditControl(IntPtr parentHwnd)
+    {
+        return FindEditControlByIndex(parentHwnd, 0);
+    }
+
+    private static IntPtr FindEditControlByIndex(IntPtr parentHwnd, int targetIndex)
+    {
+        IntPtr found = IntPtr.Zero;
+        int currentIndex = 0;
+        EnumChildWindows(parentHwnd, (hwnd, _) =>
+        {
+            var className = GetClassName(hwnd);
+            if (className != null && IsEditClassName(className))
+            {
+                if (currentIndex == targetIndex)
+                {
+                    found = hwnd;
+                    return false;
+                }
+                currentIndex++;
             }
             return true;
         }, IntPtr.Zero);
