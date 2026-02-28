@@ -4,6 +4,7 @@ using MoVALiveViewer.Pipeline;
 using MoVALiveViewer.Sources;
 using MoVALiveViewer.State;
 using MoVALiveViewer.UI.Controls;
+using System.Diagnostics;
 
 namespace MoVALiveViewer.UI;
 
@@ -22,11 +23,14 @@ public sealed class MovaViewerForm : Form
     private readonly ToolStrip _toolbar = new();
     private readonly ToolStripComboBox _sourceMode = new();
     private readonly ToolStripComboBox _processSelector = new();
+    private readonly ToolStripComboBox _textboxSelector = new();
+    private readonly ToolStripButton _refreshBtn = new();
     private readonly ToolStripButton _connectBtn = new();
     private readonly ToolStripButton _disconnectBtn = new();
     private readonly ToolStripButton _pauseBtn = new();
     private readonly ToolStripButton _recordBtn = new();
     private readonly ToolStripButton _pinBtn = new();
+    private readonly ToolStripButton _themeBtn = new();
     private readonly ToolStripTextBox _searchBox = new();
     private readonly ToolStripButton _filterStageBtn = new();
     private readonly ToolStripButton _filterOptBtn = new();
@@ -45,6 +49,7 @@ public sealed class MovaViewerForm : Form
     private readonly StatusBadge _connectionBadge = new();
 
     // Main layout
+    private readonly Panel _mainPanel = new();
     private readonly SplitContainer _mainSplit = new();
     private readonly DataGridView _eventGrid = new();
     private readonly TabControl _tabControl = new();
@@ -65,16 +70,29 @@ public sealed class MovaViewerForm : Form
     private bool _filterNxOnly;
     private bool _uiPaused;
 
+    // Process list cache for textbox selector
+    private List<(int pid, string name, string title)> _processList = new();
+
     public MovaViewerForm()
     {
         _settings = AppSettings.Load();
         _state = new AppState(_settings.RingBufferSize);
         _pipeline = new PipelineOrchestrator(_state);
 
+        // Apply saved theme preference
+        Theme.SetDark(_settings.ThemeMode != "Light");
+
         InitializeForm();
         BuildToolbar();
         BuildStatusBar();
         BuildMainLayout();
+
+        // Fix docking order: Fill panel at lowest z-index (processed last)
+        // so toolbar (Top) and status strip (Bottom) get their space first.
+        Controls.Add(_mainPanel);    // Fill - index 0 (processed last)
+        Controls.Add(_statusStrip);  // Bottom - index 1
+        Controls.Add(_toolbar);      // Top - index 2 (processed first)
+
         WireEvents();
 
         _refreshTimer.Interval = _settings.UiRefreshMs;
@@ -105,7 +123,7 @@ public sealed class MovaViewerForm : Form
         _toolbar.GripStyle = ToolStripGripStyle.Hidden;
         _toolbar.Padding = new Padding(8, 2, 8, 2);
         _toolbar.RenderMode = ToolStripRenderMode.Professional;
-        _toolbar.Renderer = new DarkToolStripRenderer();
+        _toolbar.Renderer = new ThemedToolStripRenderer();
         _toolbar.ImageScalingSize = new Size(16, 16);
 
         // Source mode
@@ -122,6 +140,22 @@ public sealed class MovaViewerForm : Form
         _processSelector.BackColor = Theme.SurfaceLight;
         _processSelector.ForeColor = Theme.TextPrimary;
         _processSelector.Visible = _sourceMode.SelectedIndex == 1;
+        _processSelector.DropDownStyle = ComboBoxStyle.DropDownList;
+        _processSelector.SelectedIndexChanged += ProcessSelector_Changed;
+
+        // Textbox selector
+        _textboxSelector.Size = new Size(220, 25);
+        _textboxSelector.BackColor = Theme.SurfaceLight;
+        _textboxSelector.ForeColor = Theme.TextPrimary;
+        _textboxSelector.Visible = false;
+        _textboxSelector.DropDownStyle = ComboBoxStyle.DropDownList;
+
+        // Refresh button
+        _refreshBtn.Text = "\u21BB";
+        _refreshBtn.ToolTipText = "Refresh process list";
+        _refreshBtn.ForeColor = Theme.TextSecondary;
+        _refreshBtn.Visible = false;
+        _refreshBtn.Click += (_, _) => RefreshProcessList();
 
         // Replay speed
         _replaySpeed.Items.AddRange(new object[] { "Real-time", "50 lines/s", "200 lines/s", "500 lines/s", "Instant", "Step" });
@@ -155,6 +189,12 @@ public sealed class MovaViewerForm : Form
         _pinBtn.ForeColor = Theme.TextSecondary;
         _pinBtn.CheckOnClick = true;
         _pinBtn.Click += PinBtn_Click;
+
+        // Theme toggle
+        _themeBtn.Text = Theme.IsDark ? "Light" : "Dark";
+        _themeBtn.ToolTipText = "Toggle light/dark theme";
+        _themeBtn.ForeColor = Theme.TextSecondary;
+        _themeBtn.Click += ThemeBtn_Click;
 
         // Search
         _searchBox.Size = new Size(140, 25);
@@ -193,6 +233,8 @@ public sealed class MovaViewerForm : Form
             new ToolStripLabel("Source:") { ForeColor = Theme.TextMuted },
             _sourceMode,
             _processSelector,
+            _textboxSelector,
+            _refreshBtn,
             _replaySpeed,
             new ToolStripSeparator(),
             _connectBtn,
@@ -209,10 +251,12 @@ public sealed class MovaViewerForm : Form
             _filterStageBtn,
             _filterOptBtn,
             _filterDemBtn,
-            _filterNxBtn
+            _filterNxBtn,
+            new ToolStripSeparator(),
+            _themeBtn
         });
 
-        Controls.Add(_toolbar);
+        // Don't add to Controls here - docking order is managed in constructor
     }
 
     private void BuildStatusBar()
@@ -250,17 +294,14 @@ public sealed class MovaViewerForm : Form
             _alertCountLabel
         });
 
-        Controls.Add(_statusStrip);
+        // Don't add to Controls here - docking order is managed in constructor
     }
 
     private void BuildMainLayout()
     {
-        var mainPanel = new Panel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = Theme.Background,
-            Padding = new Padding(4)
-        };
+        _mainPanel.Dock = DockStyle.Fill;
+        _mainPanel.BackColor = Theme.Background;
+        _mainPanel.Padding = new Padding(4);
 
         // Connection badge
         _connectionBadge.Location = new Point(10, 2);
@@ -336,8 +377,9 @@ public sealed class MovaViewerForm : Form
         _tabControl.TabPages.AddRange(new[] { overviewTab, stagesTab, linksTab, rawTab, alertsTab });
         _mainSplit.Panel2.Controls.Add(_tabControl);
 
-        mainPanel.Controls.Add(_mainSplit);
-        Controls.Add(mainPanel);
+        _mainPanel.Controls.Add(_mainSplit);
+
+        // Don't add to Controls here - docking order is managed in constructor
     }
 
     private void WireEvents()
@@ -556,9 +598,19 @@ public sealed class MovaViewerForm : Form
             }
             else // UIA
             {
+                if (_processSelector.SelectedIndex < 0 || _processSelector.SelectedIndex >= _processList.Count)
+                {
+                    MessageBox.Show("Please select a process from the dropdown.", "No Process Selected",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                var selected = _processList[_processSelector.SelectedIndex];
                 var uiaSource = new UiAutomationTextSource();
-                uiaSource.TargetProcessName = _processSelector.Text;
+                uiaSource.TargetProcessName = selected.name;
+                uiaSource.TargetWindowTitle = selected.title;
                 uiaSource.PollIntervalMs = _settings.PollIntervalMs;
+                uiaSource.TargetControlIndex = _textboxSelector.SelectedIndex >= 0 ? _textboxSelector.SelectedIndex : 0;
                 source = uiaSource;
             }
 
@@ -632,15 +684,142 @@ public sealed class MovaViewerForm : Form
     {
         bool isUia = _sourceMode.SelectedIndex == 1;
         _processSelector.Visible = isUia;
+        _textboxSelector.Visible = false;
+        _refreshBtn.Visible = isUia;
         _replaySpeed.Visible = !isUia;
 
         if (isUia)
         {
-            _processSelector.Items.Clear();
-            var procs = UiAutomationTextSource.GetProcessesWithWindows();
-            foreach (var p in procs)
-                _processSelector.Items.Add($"{p.name} - {p.title}");
+            RefreshProcessList();
         }
+    }
+
+    private void RefreshProcessList()
+    {
+        _processSelector.Items.Clear();
+        _textboxSelector.Items.Clear();
+        _textboxSelector.Visible = false;
+
+        _processList = UiAutomationTextSource.GetProcessesWithWindows();
+        foreach (var p in _processList)
+            _processSelector.Items.Add($"{p.name} - {p.title}");
+
+        if (_processSelector.Items.Count > 0)
+            _processSelector.SelectedIndex = 0;
+    }
+
+    private void ProcessSelector_Changed(object? sender, EventArgs e)
+    {
+        PopulateTextboxSelector();
+    }
+
+    private void PopulateTextboxSelector()
+    {
+        _textboxSelector.Items.Clear();
+
+        if (_processSelector.SelectedIndex < 0 || _processSelector.SelectedIndex >= _processList.Count)
+        {
+            _textboxSelector.Visible = false;
+            return;
+        }
+
+        var selected = _processList[_processSelector.SelectedIndex];
+
+        try
+        {
+            var processes = Process.GetProcessesByName(selected.name);
+            foreach (var proc in processes)
+            {
+                try
+                {
+                    if (proc.MainWindowHandle != IntPtr.Zero &&
+                        (proc.MainWindowTitle?.Contains(selected.title, StringComparison.OrdinalIgnoreCase) ?? false))
+                    {
+                        var editControls = UiAutomationTextSource.GetEditControlsForWindow(proc.MainWindowHandle);
+                        foreach (var ctrl in editControls)
+                            _textboxSelector.Items.Add($"[{ctrl.index}] {ctrl.className}: {ctrl.textPreview}");
+                        break;
+                    }
+                }
+                finally { proc.Dispose(); }
+            }
+        }
+        catch { }
+
+        _textboxSelector.Visible = _textboxSelector.Items.Count > 0;
+        if (_textboxSelector.Items.Count > 0)
+            _textboxSelector.SelectedIndex = 0;
+    }
+
+    private void ThemeBtn_Click(object? sender, EventArgs e)
+    {
+        Theme.Toggle();
+        _themeBtn.Text = Theme.IsDark ? "Light" : "Dark";
+        ReapplyTheme();
+    }
+
+    private void ReapplyTheme()
+    {
+        SuspendLayout();
+
+        // Form
+        Theme.ApplyToForm(this);
+
+        // Toolbar
+        _toolbar.BackColor = Theme.SurfaceLight;
+        _toolbar.ForeColor = Theme.TextPrimary;
+        _toolbar.Renderer = new ThemedToolStripRenderer();
+        foreach (ToolStripItem item in _toolbar.Items)
+        {
+            switch (item)
+            {
+                case ToolStripComboBox cb:
+                    cb.BackColor = Theme.SurfaceLight;
+                    cb.ForeColor = Theme.TextPrimary;
+                    break;
+                case ToolStripLabel lbl:
+                    lbl.ForeColor = Theme.TextMuted;
+                    break;
+                case ToolStripTextBox tb:
+                    tb.BackColor = Theme.SurfaceLight;
+                    tb.ForeColor = Theme.TextPrimary;
+                    break;
+            }
+        }
+
+        // Re-color specific buttons
+        _connectBtn.ForeColor = Theme.Green;
+        _disconnectBtn.ForeColor = Theme.Red;
+        _pauseBtn.ForeColor = _uiPaused ? Theme.Yellow : Theme.TextSecondary;
+        _recordBtn.ForeColor = _recordBtn.Checked ? Theme.Red : Theme.TextSecondary;
+        _pinBtn.ForeColor = _pinBtn.Checked ? Theme.Accent : Theme.TextSecondary;
+        _themeBtn.ForeColor = Theme.TextSecondary;
+        _refreshBtn.ForeColor = Theme.TextSecondary;
+        _filterStageBtn.ForeColor = _filterStageOnly ? Theme.Accent : Theme.TextMuted;
+        _filterOptBtn.ForeColor = _filterOptOnly ? Theme.Purple : Theme.TextMuted;
+        _filterDemBtn.ForeColor = _filterDemOnly ? Theme.Orange : Theme.TextMuted;
+        _filterNxBtn.ForeColor = _filterNxOnly ? Theme.Cyan : Theme.TextMuted;
+
+        // Status strip
+        _statusStrip.BackColor = Theme.SurfaceLight;
+        _statusStrip.ForeColor = Theme.TextSecondary;
+        _statusLabel.ForeColor = Theme.TextSecondary;
+        _lineCountLabel.ForeColor = Theme.TextMuted;
+        _snapshotCountLabel.ForeColor = Theme.TextMuted;
+        _alertCountLabel.ForeColor = Theme.TextMuted;
+
+        // Main panel & split
+        _mainPanel.BackColor = Theme.Background;
+        _mainSplit.BackColor = Theme.Border;
+
+        // Recursively re-style all child controls
+        Theme.ReapplyRecursive(_mainPanel);
+
+        // Tab control custom draw will use current Theme colors automatically
+        _tabControl.Invalidate();
+
+        ResumeLayout(true);
+        Invalidate(true);
     }
 
     private void TabControl_DrawItem(object? sender, DrawItemEventArgs e)
@@ -676,16 +855,17 @@ public sealed class MovaViewerForm : Form
         _settings.FilterOPTBDR = _filterOptOnly;
         _settings.FilterDEM = _filterDemOnly;
         _settings.FilterNX = _filterNxOnly;
+        _settings.ThemeMode = Theme.IsDark ? "Dark" : "Light";
         _settings.Save();
 
         base.OnFormClosing(e);
     }
 }
 
-// Custom dark renderer for ToolStrip
-file sealed class DarkToolStripRenderer : ToolStripProfessionalRenderer
+// Custom themed renderer for ToolStrip
+file sealed class ThemedToolStripRenderer : ToolStripProfessionalRenderer
 {
-    public DarkToolStripRenderer() : base(new DarkColorTable()) { }
+    public ThemedToolStripRenderer() : base(new ThemedColorTable()) { }
 
     protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
     {
@@ -727,7 +907,7 @@ file sealed class DarkToolStripRenderer : ToolStripProfessionalRenderer
     }
 }
 
-file sealed class DarkColorTable : ProfessionalColorTable
+file sealed class ThemedColorTable : ProfessionalColorTable
 {
     public override Color ToolStripDropDownBackground => Theme.Surface;
     public override Color MenuItemBorder => Theme.Border;
