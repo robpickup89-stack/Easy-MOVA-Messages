@@ -87,11 +87,14 @@ public sealed partial class UiAutomationTextSource : ITextSource
     }
 
     /// <summary>
-    /// Returns only processes whose main window contains at least one Edit/RichEdit/TextBox child control.
+    /// Returns processes that currently expose a visible main window title.
+    /// Processes containing an editable control are listed first, but we still include
+    /// other windows so the user can target custom/owner-drawn text controls.
     /// </summary>
     public static List<(int pid, string name, string title)> GetProcessesWithWindows()
     {
-        var result = new List<(int pid, string name, string title)>();
+        var withTextControls = new List<(int pid, string name, string title)>();
+        var withoutTextControls = new List<(int pid, string name, string title)>();
         try
         {
             foreach (var proc in Process.GetProcesses())
@@ -100,8 +103,11 @@ public sealed partial class UiAutomationTextSource : ITextSource
                 {
                     if (proc.MainWindowHandle != IntPtr.Zero && !string.IsNullOrEmpty(proc.MainWindowTitle))
                     {
+                        var processInfo = (proc.Id, proc.ProcessName, proc.MainWindowTitle);
                         if (HasEditControl(proc.MainWindowHandle))
-                            result.Add((proc.Id, proc.ProcessName, proc.MainWindowTitle));
+                            withTextControls.Add(processInfo);
+                        else
+                            withoutTextControls.Add(processInfo);
                     }
                 }
                 catch { }
@@ -109,7 +115,12 @@ public sealed partial class UiAutomationTextSource : ITextSource
             }
         }
         catch { }
-        return result.OrderBy(p => p.name).ToList();
+
+        return withTextControls
+            .OrderBy(p => p.name)
+            .ThenBy(p => p.title)
+            .Concat(withoutTextControls.OrderBy(p => p.name).ThenBy(p => p.title))
+            .ToList();
     }
 
     /// <summary>
